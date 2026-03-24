@@ -1,14 +1,4 @@
-const nodemailer = require("nodemailer");
-
-const transporter = nodemailer.createTransport({
-    host: "sandbox.smtp.mailtrap.io",
-    port: 25,
-    secure: false, // Use true for port 465, false for port 587
-    auth: {
-        user: "",
-        pass: "",
-    },
-});
+const { transporter } = require("./mailer");
 
 module.exports = {
     sendMail: async function (to, url) {

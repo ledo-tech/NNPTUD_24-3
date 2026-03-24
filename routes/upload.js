@@ -4,6 +4,11 @@ let { uploadImage, uploadExcel } = require('../utils/uploadHandler')
 let path = require('path')
 let exceljs = require('exceljs')
 let fs = require('fs')
+let categoriesModel = require('../schemas/categories')
+let productsModel = require('../schemas/products')
+let inventoryModel = require('../schemas/inventories')
+let mongoose = require('mongoose')
+let slugify = require('slugify')
 
 router.post('/one_image', uploadImage.single('file'), function (req, res, next) {
     if (!req.file) {
@@ -53,16 +58,99 @@ router.post('/excel', uploadExcel.single('file'), async function (req, res, next
         )
         await workbook.xlsx.readFile(pathFile)
         let worksheet = workbook.worksheets[0];
-        for (let index = 2; index <= worksheet.rowCount; index++) {
-            const element = worksheet.getRow(index);
-            let sku = element.getCell(1);
-            let title = element.getCell(2);
-            let category = element.getCell(3);
-            let price = element.getCell(4);
-            let stock = element.getCell(5);
-            console.log(sku+"-"+title+"-"+category+"-"+price+"-"+stock);
+        let result = []
+        let categories = await categoriesModel.find({
+        });
+        let categoriesMap = new Map();
+        for (const category of categories) {
+            categoriesMap.set(category.name, category._id)
         }
-        //fs.unlinkSync(pathFile)
+        let products = await productsModel.find({})
+        let getTitle = products.map(p => p.title)
+        let getSku = products.map(p => p.sku)
+
+        for (let index = 2; index <= worksheet.rowCount; index++) {
+            let errorsInRow = []
+            const element = worksheet.getRow(index);
+            let sku = element.getCell(1).value;
+            let title = element.getCell(2).value;
+            let category = element.getCell(3).value;
+
+            let price = Number.parseInt(element.getCell(4).value)
+            let stock = Number.parseInt(element.getCell(5).value)
+
+            if (price < 0 || isNaN(price)) {
+                errorsInRow.push("price khong hop le")
+            }
+            if (stock < 0 || isNaN(stock)) {
+                errorsInRow.push("stock khong hop le")
+            }
+            if (!categoriesMap.has(category)) {
+                errorsInRow.push('category khong hop le')
+            }
+            if (getSku.includes(sku)) {
+                errorsInRow.push('sku bi trung')
+            }
+            if (getTitle.includes(title)) {
+                errorsInRow.push('title khong hop le')
+            }
+            if (errorsInRow.length > 0) {
+                result.push({
+                    success: false,
+                    data: errorsInRow
+                });
+                continue;
+            }// 
+
+            let session = await mongoose.startSession();
+            session.startTransaction()
+            try {
+                let newProduct = new productsModel({
+                    sku: sku,
+                    title: title,
+                    slug: slugify(title, {
+                        replacement: '-',
+                        remove: undefined,
+                        lower: true,
+                        strict: false,
+                    }),
+                    price: price,
+                    description: title,
+                    category: categoriesMap.get(category)
+                });
+                newProduct = await newProduct.save({ session });
+                let newInventory = new inventoryModel({
+                    product: newProduct._id,
+                    stock: stock
+                })
+                newInventory = await newInventory.save({ session });
+                newInventory = await newInventory.populate('product')
+                await session.commitTransaction();
+                await session.endSession()
+                getTitle.push(title);
+                getSku.push(sku)
+                result.push({
+                    success: true,
+                    data: newInventory
+                })
+            } catch (error) {
+                await session.abortTransaction();
+                await session.endSession()
+                result.push({
+                    success: false,
+                    data: error.message
+                })
+            }
+
+        }
+        fs.unlinkSync(pathFile)
+        res.send(result.map(function (r, index) {
+            if (r.success) {
+                return { [index + 1]: r.data }
+            } else {
+                return { [index + 1]: r.data.join(',') }
+            }
+        }))
     }
 })
 

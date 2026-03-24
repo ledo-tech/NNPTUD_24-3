@@ -1,5 +1,10 @@
 let mongoose = require('mongoose');
 let productSchema = new mongoose.Schema({
+    sku: {
+        type: String,
+        unique: [true, "sku khong duoc trung"],
+        required: [true, "sku khong duoc rong"]
+    },
     title: {
         type: String,
         unique: [true, "title khong duoc trung"],
